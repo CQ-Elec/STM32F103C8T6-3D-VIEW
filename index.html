@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STM32F103C8T6 · 3D 拆解可视化</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230a1628'/><rect x='8' y='8' width='16' height='16' rx='2' fill='none' stroke='%2300d4ff' stroke-width='2'/><circle cx='16' cy='16' r='3' fill='%2300d4ff'/></svg>">
+<style>
+  :root{
+    --bg:#050810;
+    --panel:rgba(10,20,40,.72);
+    --border:rgba(0,212,255,.18);
+    --cyan:#00d4ff;
+    --text:#e2e8f0;
+    --dim:#7a8aa0;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  #app{position:fixed;inset:0}
+  #scene{position:absolute;inset:0;display:block}
+
+  /* ===== 顶部标题 ===== */
+  .topbar{position:absolute;top:0;left:0;right:0;padding:18px 24px;
+    display:flex;align-items:flex-start;justify-content:space-between;pointer-events:none;z-index:10}
+  .brand{pointer-events:auto}
+  .brand h1{font-size:20px;font-weight:600;letter-spacing:.5px;
+    background:linear-gradient(90deg,var(--cyan),#7dd3fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .brand .sub{font-size:12px;color:var(--dim);margin-top:4px;letter-spacing:1px}
+  .chip-badges{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .badge{font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:20px;
+    color:var(--cyan);background:rgba(0,212,255,.06);letter-spacing:.5px}
+
+  /* ===== UI 缓慢入场：开场结束后逐级淡入 ===== */
+  .topbar,.guide,.controls{opacity:0;transition:opacity .9s ease,transform .9s ease}
+  .topbar{transform:translateY(-12px)}
+  .guide{transform:translateY(12px)}
+  .controls{transform:translateX(-50%) translateY(12px)}
+  body.reveal .topbar{opacity:1;transform:translateY(0);transition-delay:.25s}
+  body.reveal .guide{opacity:1;transform:translateY(0);transition-delay:.6s}
+  body.reveal .controls{opacity:1;transform:translateX(-50%) translateY(0);transition-delay:.9s}
+  /* 电影检视：隐藏全部界面文字与按钮 */
+  body.cinematic .topbar,
+  body.cinematic .guide,
+  body.cinematic .controls,
+  body.cinematic .info-panel,
+  body.cinematic #tapHint{opacity:0!important;pointer-events:none;transition:opacity .4s ease}
+
+  /* ===== 右侧信息面板 ===== */
+  .info-panel{position:absolute;top:80px;right:20px;width:300px;max-height:calc(100vh - 200px);
+    background:var(--panel);backdrop-filter:blur(12px);border:1px solid var(--border);
+    border-radius:12px;padding:20px;z-index:10;overflow-y:auto;
+    opacity:0;transform:translateX(20px);transition:all .3s ease}
+  .info-panel.show{opacity:1;transform:translateX(0)}
+  .info-panel .tag{font-size:11px;color:var(--cyan);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px}
+  .info-panel h2{font-size:18px;font-weight:600;margin-bottom:12px;color:#fff}
+  .info-panel .desc{font-size:13px;line-height:1.7;color:var(--dim);margin-bottom:14px}
+  .info-panel .specs{display:flex;flex-direction:column;gap:8px}
+  .info-panel .spec{display:flex;justify-content:space-between;font-size:12px;
+    padding:6px 0;border-bottom:1px dashed rgba(255,255,255,.06)}
+  .info-panel .spec .k{color:var(--dim)}
+  .info-panel .spec .v{color:var(--text);font-weight:500;font-family:Consolas,monospace}
+
+  /* ===== 底部控制栏 ===== */
+  .controls{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);
+    display:flex;gap:10px;z-index:10;align-items:center}
+  .btn{padding:10px 20px;border:1px solid var(--border);border-radius:8px;
+    background:rgba(0,212,255,.08);color:var(--cyan);font-size:13px;cursor:pointer;
+    transition:all .2s;letter-spacing:.5px;backdrop-filter:blur(8px);user-select:none}
+  .btn:hover{background:rgba(0,212,255,.18);box-shadow:0 0 20px rgba(0,212,255,.25)}
+  .btn.primary{background:var(--cyan);color:#051020;font-weight:600}
+  .btn.primary:hover{box-shadow:0 0 30px rgba(0,212,255,.5)}
+
+  /* ===== 操作引导 ===== */
+  .guide{position:absolute;bottom:24px;left:24px;z-index:10;font-size:12px;color:var(--dim);
+    line-height:1.9;max-width:220px}
+  .guide .g-title{color:var(--cyan);font-size:11px;letter-spacing:2px;margin-bottom:6px}
+  .guide kbd{display:inline-block;padding:1px 6px;border:1px solid rgba(255,255,255,.15);
+    border-radius:4px;font-size:11px;background:rgba(255,255,255,.05);color:var(--text);
+    font-family:inherit;margin-right:4px}
+
+  /* ===== 部件标签 ===== */
+  .label{position:absolute;pointer-events:none;font-size:11px;color:var(--text);
+    background:rgba(5,15,30,.85);border:1px solid var(--border);border-radius:4px;
+    padding:3px 8px;transform:translate(-50%,-100%);white-space:nowrap;z-index:5;
+    opacity:0;transition:opacity .3s;backdrop-filter:blur(4px)}
+  .label.visible{opacity:1}
+  .label .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:middle}
+
+  /* ===== 加载提示 ===== */
+  .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:var(--bg);z-index:100;flex-direction:column;gap:16px}
+  .loading .ring{width:40px;height:40px;border:2px solid var(--border);border-top-color:var(--cyan);
+    border-radius:50%;animation:spin 1s linear infinite}
+  .loading p{color:var(--dim);font-size:13px;letter-spacing:2px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ===== 开场动画遮罩 ===== */
+  #intro{position:fixed;inset:0;z-index:200;background:#03050a;overflow:hidden;
+    transition:opacity .8s ease;display:flex;align-items:center;justify-content:center}
+  #intro.off{opacity:0;pointer-events:none}
+  .hud-corner{position:absolute;width:34px;height:34px;border:2px solid rgba(0,212,255,.5)}
+  .hud-corner.tl{top:24px;left:24px;border-right:none;border-bottom:none}
+  .hud-corner.tr{top:24px;right:24px;border-left:none;border-bottom:none}
+  .hud-corner.bl{bottom:24px;left:24px;border-right:none;border-top:none}
+  .hud-corner.br{bottom:24px;right:24px;border-left:none;border-top:none}
+  .intro-center{text-align:center;transform:translateY(-6%)}
+  .intro-eyebrow{font-size:11px;letter-spacing:6px;color:var(--dim);margin-bottom:18px;
+    font-family:Consolas,monospace}
+  .intro-title{font-family:Consolas,"Courier New",monospace;font-size:clamp(26px,5vw,54px);
+    font-weight:700;letter-spacing:4px;color:#eaf6ff;text-shadow:0 0 24px rgba(0,212,255,.45);
+    min-height:1.2em}
+  .intro-title .lock{color:var(--cyan)}
+  .intro-sub{font-size:13px;color:var(--dim);letter-spacing:2px;margin-top:14px;font-family:Consolas,monospace}
+  .intro-bar{width:min(360px,70vw);height:2px;background:rgba(255,255,255,.08);margin:26px auto 10px;overflow:hidden}
+  .intro-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#0077aa,var(--cyan));
+    box-shadow:0 0 12px rgba(0,212,255,.6);transition:width .12s linear}
+  .intro-pct{font-size:11px;color:var(--cyan);font-family:Consolas,monospace;letter-spacing:2px}
+  .intro-log{position:absolute;left:32px;bottom:32px;font-family:Consolas,monospace;
+    font-size:12px;line-height:1.9;color:rgba(122,180,210,.85);max-width:60vw}
+  .intro-log div{opacity:0;transform:translateX(-6px);transition:all .3s}
+  .intro-log div.on{opacity:1;transform:translateX(0)}
+  .intro-log .ok{color:var(--cyan)}
+  .intro-scanline{position:absolute;left:0;width:100%;height:120px;top:-120px;
+    background:linear-gradient(180deg,transparent,rgba(0,212,255,.06),transparent);
+    animation:scan 4.5s linear infinite}
+  @keyframes scan{to{transform:translateY(120vh)}}
+
+  /* ===== 开场结束后的点击提示 ===== */
+  #tapHint{position:absolute;bottom:88px;left:50%;transform:translateX(-50%) translateY(10px);
+    z-index:9;font-size:13px;color:var(--cyan);letter-spacing:1px;pointer-events:none;
+    padding:8px 18px;border:1px solid var(--border);border-radius:20px;
+    background:rgba(0,212,255,.08);opacity:0;transition:all .6s}
+  #tapHint.on{opacity:1;transform:translateX(-50%) translateY(0);animation:pulseHint 2s ease-in-out infinite}
+  @keyframes pulseHint{0%,100%{box-shadow:0 0 0 rgba(0,212,255,0)}50%{box-shadow:0 0 18px rgba(0,212,255,.35)}}
+
+  @media(max-width:768px){
+    .info-panel{width:calc(100vw - 32px);right:16px;left:16px;top:auto;bottom:90px;max-height:40vh}
+    .guide{display:none}
+    .topbar{padding:12px 16px}
+    .brand h1{font-size:16px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene"></canvas>
+  <div id="labels"></div>
+
+  <div class="topbar">
+    <div class="brand">
+      <h1>STM32F103C8T6</h1>
+      <div class="sub">ARM Cortex-M3 · 微控制器 · 3D 拆解可视化</div>
+      <div class="chip-badges">
+        <span class="badge">LQFP-48</span>
+        <span class="badge">72 MHz</span>
+        <span class="badge">64KB Flash</span>
+        <span class="badge">20KB SRAM</span>
+      </div>
+    </div>
+  </div>
+
+  <aside class="info-panel" id="infoPanel">
+    <div class="tag" id="ipTag">COMPONENT</div>
+    <h2 id="ipName">部件名称</h2>
+    <div class="desc" id="ipDesc">点击芯片的任意部件查看详细信息</div>
+    <div class="specs" id="ipSpecs"></div>
+  </aside>
+
+  <div class="guide">
+    <div class="g-title">操作指南</div>
+    <div><kbd>拖拽</kbd>旋转视角</div>
+    <div><kbd>滚轮</kbd>缩放距离</div>
+    <div><kbd>右键</kbd>平移场景</div>
+    <div><kbd>点击部件</kbd>拆解 / 合拢</div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="btnExplode">拆解全部</button>
+    <button class="btn" id="btnAssemble">合拢复位</button>
+    <button class="btn" id="btnReset">重置视角</button>
+    <button class="btn" id="btnInspect">检视</button>
+  </div>
+
+  <div class="loading" id="loading">
+    <div class="ring"></div>
+    <p>正在加载 3D 场景...</p>
+  </div>
+
+  <!-- ===== 开场动画 ===== -->
+  <div id="intro">
+    <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
+    <div class="hud-corner bl"></div><div class="hud-corner br"></div>
+    <div class="intro-scanline"></div>
+    <div class="intro-center">
+      <div class="intro-eyebrow">STM32 INTERACTIVE TEARDOWN</div>
+      <div class="intro-title" id="introTitle">STM32F103C8T6</div>
+      <div class="intro-sub">ARM Cortex-M3 · 32-bit Microcontroller · LQFP-48 · 72 MHz</div>
+      <div class="intro-bar"><div class="intro-bar-fill" id="introBar"></div></div>
+      <div class="intro-pct" id="introPct">0%</div>
+    </div>
+    <div class="intro-log" id="introLog"></div>
+  </div>
+
+  <div id="tapHint">点击任意部件，开始拆解</div>
+</div>
+
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/Pass.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script>
+(function(){
+  // ========== 场景基础 ==========
+  const canvas = document.getElementById('scene');
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050810);
+  scene.fog = new THREE.Fog(0x050810, 28, 65);
+
+  const camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 200);
+  camera.position.set(11, 9, 13);
+
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 6;
+  controls.maxDistance = 35;
+  controls.maxPolarAngle = Math.PI * 0.48;
+
+  // ========== Bloom 后期辉光（Tron 霓虹：只让高亮发光体晕光） ==========
+  const composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  const bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    0.9,   // strength 辉光强度
+    0.55,  // radius 晕开半径
+    0.62   // threshold 亮度阈值，低于此不发光
+  );
+  composer.addPass(bloomPass);
+
+  // ========== 程序化摄影棚环境（金属反射，无需外部 HDR） ==========
+  function buildStudioEnvironment(){
+    const env = new THREE.Scene();
+    env.background = new THREE.Color(0x0a0d14);
+    function panel(w,h,color,intensity,x,y,z,ry){
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(w,h),
+        new THREE.MeshBasicMaterial({color:color})
+      );
+      m.material.color.multiplyScalar(intensity);
+      m.position.set(x,y,z);
+      m.lookAt(0,0,0);
+      if(ry) m.rotation.y += ry;
+      env.add(m);
+    }
+    panel(10,6,0xffffff,2.2,0,8,0,0);       // 顶部柔光箱
+    panel(8,5,0x9ecfff,1.4,8,3,2,0);        // 左侧冷光
+    panel(8,5,0xffe6c8,0.9,-8,2,-3,0);      // 右侧暖补
+    panel(6,4,0x406080,0.6,0,2,-8,0);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const tex = pmrem.fromScene(env, 0.02).texture;
+    pmrem.dispose();
+    return tex;
+  }
+  scene.environment = buildStudioEnvironment();
+
+  // ========== 光照 ==========
+  scene.add(new THREE.AmbientLight(0x3a5078, 0.5));
+
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
+  keyLight.position.set(10, 16, 8);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.camera.left = -15;
+  keyLight.shadow.camera.right = 15;
+  keyLight.shadow.camera.top = 15;
+  keyLight.shadow.camera.bottom = -15;
+  keyLight.shadow.bias = -0.0004;
+  scene.add(keyLight);
+
+  const fillLight = new THREE.DirectionalLight(0x7fb8e8, 0.35);
+  fillLight.position.set(-9, 5, -7);
+  scene.add(fillLight);
+
+  const rimLight = new THREE.PointLight(0x00d4ff, 1.2, 35);
+  rimLight.position.set(0, 7, -11);
+  scene.add(rimLight);
+
+  // ========== 多米诺方格地面：从中心一圈圈翻倒瘫倒铺开 ==========
+  const _clamp01 = v => Math.max(0, Math.min(1, v));
+  const _easeOutCubic = x => 1 - Math.pow(1-x, 3);
+  const TILE_N = 33;
+  const TILE_SP = 0.72;
+  const TILE_SIZE = 0.64;
+  const TILE_Y = -2.92;
+  const WALL_SPEED = 9.0;          // 光墙扩张速度（单位/秒），与翻倒延迟同步
+  const WALL_MAXR = 12.0;         // 光墙最大半径，到边缘淡出
+  const tileGeo = new THREE.BoxGeometry(TILE_SIZE, 0.05, TILE_SIZE);
+  const tileMat = new THREE.MeshStandardMaterial({
+    color:0x05070a, roughness:0.6, metalness:0.3, envMapIntensity:0.4,
+    emissive:0x000000, emissiveIntensity:0
+  });
+  const tileCount = TILE_N*TILE_N;
+  const tileMesh = new THREE.InstancedMesh(tileGeo, tileMat, tileCount);
+  tileMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  tileMesh.frustumCulled = false;
+  scene.add(tileMesh);
+
+  const tileData = [];
+  const _m = new THREE.Matrix4();
+  const _q = new THREE.Quaternion();
+  const _off = new THREE.Vector3();
+  const _c = new THREE.Vector3();
+  const _col = new THREE.Color();
+  const _s = new THREE.Vector3(1,1,1);
+  const half = (TILE_N-1)/2;
+  let tileIdx = 0;
+  for(let i=0;i<TILE_N;i++){
+    for(let j=0;j<TILE_N;j++){
+      const x=(i-half)*TILE_SP, z=(j-half)*TILE_SP;
+      const r=Math.hypot(x,z);
+      const n=new THREE.Vector3(x,0,z);
+      if(n.lengthSq()>0.001) n.normalize(); else n.set(0,0,1);
+      const t=new THREE.Vector3(-n.z,0,n.x);
+      tileData.push({idx:tileIdx, x, z, r, n, t, done:false, delay:r/WALL_SPEED});
+      tileIdx++;
+    }
+  }
+
+  // 计算单个方格翻倒姿态：rawP=0 竖直立起，1 平躺落定；e 为缓动后的姿态
+  function writeTile(d, e, rawP){
+    const a=(1-e)*Math.PI/2;
+    _q.setFromAxisAngle(d.t, a);
+    // 内侧边为支点，平板由竖直向外翻倒到地面
+    const px=d.x - d.n.x*TILE_SIZE/2;
+    const pz=d.z - d.n.z*TILE_SIZE/2;
+    _off.set(d.n.x*TILE_SIZE/2, 0.04, d.n.z*TILE_SIZE/2).applyQuaternion(_q);
+    _c.set(px+_off.x, TILE_Y+_off.y, pz+_off.z);
+    _m.compose(_c, _q, _s);
+    tileMesh.setMatrixAt(d.idx, _m);
+    // 未翻倒/落定：纯黑隐入暗场；光墙扫过：高亮青（供 Bloom）
+    const g = (rawP>0.02 && rawP<0.98) ? (1-Math.abs(rawP-0.5)*2) : 0;
+    const br=0.006, bg=0.008, bb=0.012;
+    _col.setRGB(
+      br*(1-g)+0.25*g,
+      bg*(1-g)+0.9*g,
+      bb*(1-g)+1.0*g
+    );
+    tileMesh.setColorAt(d.idx, _col);
+  }
+  function updateTiles(wp){
+    tileData.forEach(d=>{
+      if(d.done) return;
+      const rawP = _clamp01((wp - d.delay)/0.38);
+      writeTile(d, _easeOutCubic(rawP), rawP);
+      if(rawP>=1) d.done=true;
+    });
+    tileMesh.instanceMatrix.needsUpdate = true;
+    if(tileMesh.instanceColor) tileMesh.instanceColor.needsUpdate = true;
+  }
+  // 初始：全部竖直立起、隐入暗场
+  updateTiles(-100);
+
+  // 中心能量辉光底盘
+  const glowDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(5.5, 48),
+    new THREE.MeshBasicMaterial({color:0x1a9fd8, transparent:true, opacity:0.16,
+      blending:THREE.AdditiveBlending, depthWrite:false})
+  );
+  glowDisc.rotation.x = -Math.PI/2;
+  glowDisc.position.y = -2.96;
+  scene.add(glowDisc);
+
+  // 中心静态科技圆环
+  const techRing = new THREE.Mesh(
+    new THREE.RingGeometry(4.4,4.48,96),
+    new THREE.MeshBasicMaterial({color:0x3fd2ff, transparent:true, opacity:0.35,
+      side:THREE.DoubleSide, blending:THREE.AdditiveBlending, depthWrite:false})
+  );
+  techRing.rotation.x = -Math.PI/2;
+  techRing.position.y = -2.93;
+  scene.add(techRing);
+
+  // 扩散涟漪环（红色余波）
+  const rippleRings = [];
+  for(let i=0;i<5;i++){
+    const rm = new THREE.Mesh(
+      new THREE.RingGeometry(0.96,1.02,72),
+      new THREE.MeshBasicMaterial({color:0xff453a,transparent:true,opacity:0,
+        side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false})
+    );
+    rm.rotation.x = -Math.PI/2;
+    rm.position.y = -2.9;
+    scene.add(rm);
+    rippleRings.push(rm);
+  }
+
+  // 推进光墙（Light Cycle 式发光亮环，沿地面外扩扫过；单位半径，用时缩放）
+  const wallCore = new THREE.Mesh(
+    new THREE.RingGeometry(0.985,1.02,180),
+    new THREE.MeshBasicMaterial({color:0x33d6ff,transparent:true,opacity:0,
+      side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false})
+  );
+  wallCore.rotation.x = -Math.PI/2;
+  wallCore.position.y = -2.89;
+  scene.add(wallCore);
+  const wallHalo = new THREE.Mesh(
+    new THREE.RingGeometry(0.86,1.16,180),
+    new THREE.MeshBasicMaterial({color:0x8fe6ff,transparent:true,opacity:0,
+      side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false})
+  );
+  wallHalo.rotation.x = -Math.PI/2;
+  wallHalo.position.y = -2.9;
+  scene.add(wallHalo);
+
+  const floorGeo = new THREE.PlaneGeometry(60, 60);
+  const floorMat = new THREE.MeshStandardMaterial({color:0x060a12, roughness:0.92, metalness:0.15});
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.position.y = -3.01;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // ========== 部件数据 ==========
+  const COMPONENTS = {
+    lid: {
+      name:'环氧树脂封装顶盖',
+      tag:'PACKAGE LID',
+      desc:'黑色环氧树脂（Epoxy Molding Compound）转移成型封装顶盖，保护内部硅片免受机械损伤、湿气与光照。顶面激光打标型号、批号与产地，左上角圆点为 1 脚定位标记（Pin 1 Index Dot）。',
+      specs:[['材料','环氧树脂','尺寸','7×7 mm','厚度','~0.9 mm','打标','激光蚀刻']]
+    },
+    pins: {
+      name:'鸥翼引脚（Lead Frame）',
+      tag:'LEAD FRAME / GULL-WING',
+      desc:'48 个鸥翼形（Gull-wing）引脚，铜合金框架冲压成型后镀锡。0.5 mm 间距，三段弯折：肩部贴出、斜面向下、底部水平焊脚，负责芯片与 PCB 间的电气连接。',
+      specs:[['引脚数','48 (LQFP-48)','间距','0.5 mm','材料','铜合金 + 镀锡','形式','鸥翼 Gull-wing']]
+    },
+    die: {
+      name:'硅片（Die）+ 金线键合',
+      tag:'SILICON DIE / BONDS',
+      desc:'CMOS 工艺单晶硅裸片，集成 CPU、存储器与全部外设。边缘通过直径约 25 μm 的金丝（Gold Wire）拱弧键合到基板焊盘，实现硅片电路与引脚框架的电气连通。',
+      specs:[['工艺','标准 CMOS','键合线','金丝 Au ~25μm','键合','拱弧 Ball/Wedge','尺寸','~3×3 mm']]
+    },
+    core: {
+      name:'ARM Cortex-M3 内核',
+      tag:'CPU CORE',
+      desc:'32 位 RISC 处理器内核，工作频率最高 72 MHz。哈佛架构，Thumb-2 指令集，内置嵌套向量中断控制器（NVIC）与存储器保护单元（MPU）。',
+      specs:[['架构','ARMv7-M','主频','72 MHz','流水线','3 级','中断','最多 60 个']]
+    },
+    flash: {
+      name:'Flash 存储器',
+      tag:'FLASH MEMORY',
+      desc:'64 KB 嵌入式 NOR Flash，存储用户程序代码与常量。支持在系统编程（ISP）与在应用编程（IAP），可经 SWD 接口烧写，典型擦写寿命 1 万次。',
+      specs:[['容量','64 KB','类型','NOR Flash','寿命','10K 次擦写','数据保持','20 年']]
+    },
+    sram: {
+      name:'SRAM 静态存储器',
+      tag:'SRAM',
+      desc:'20 KB 静态随机存取存储器，用于运行时数据、堆栈与变量。与 CPU 同频访问，零等待周期。',
+      specs:[['容量','20 KB','类型','SRAM','等待周期','0','位宽','32 位']]
+    },
+    gpio: {
+      name:'GPIO 通用输入输出',
+      tag:'GPIO PORTS',
+      desc:'37 个通用 I/O（PA0~PA15、PB0~PB15、PC13~PC15、PD0/PD1），可配置输入/输出/复用/模拟模式，翻转速度最高 18 MHz。',
+      specs:[['端口','A / B / C / D','引脚数','37','翻转速度','18 MHz','复用功能','支持']]
+    },
+    comm: {
+      name:'通信外设',
+      tag:'COMM PERIPHERALS',
+      desc:'2 路 I2C、3 路 USART（最高 4.5 Mbps）、2 路 SPI（最高 18 Mbps），支持 DMA 传输，便于连接传感器、显示屏等外部器件。',
+      specs:[['I2C','2 路','USART','3 路','SPI','2 路','DMA','7 通道']]
+    },
+    timer: {
+      name:'定时器 / 计数器',
+      tag:'TIMERS',
+      desc:'1 路高级控制定时器 TIM1（互补 PWM、死区插入），3 路通用定时器 TIM2/3/4，支持输入捕获、输出比较与 PWM 生成。',
+      specs:[['高级','TIM1','通用','TIM2/3/4','PWM','支持','编码器接口','支持']]
+    },
+    adc: {
+      name:'12 位 ADC 模数转换器',
+      tag:'ADC',
+      desc:'2 路 12 位逐次逼近型 ADC，16 个外部通道，最短转换 1 μs，支持扫描、间断模式与模拟看门狗。',
+      specs:[['位数','12 bit','通道','16 外部','转换时间','1 μs','参考电压','2.4~3.6 V']]
+    },
+    clock: {
+      name:'时钟与复位系统 RCC',
+      tag:'CLOCK & RCC',
+      desc:'复位与时钟控制模块，驱动内部 8 MHz RC 振荡器与外部晶振，经 PLL 倍频至 72 MHz，支持 STOP / STANDBY 低功耗模式。',
+      specs:[['HSE','4~16 MHz','HSI','8 MHz RC','PLL 输出','72 MHz','低功耗','STOP/STANDBY']]
+    },
+    swd: {
+      name:'SWD 调试接口',
+      tag:'DEBUG INTERFACE',
+      desc:'串行线调试（SWD），仅需 SWDIO 与 SWCLK 两根线即可烧写、在线调试与断点设置，替代传统 JTAG。',
+      specs:[['接口','SWD','信号','SWDIO / SWCLK','功能','烧写 / 调试','复位','NRST']]
+    }
+  };
+
+  // ========== 构建芯片模型 ==========
+  const chipGroup = new THREE.Group();
+  scene.add(chipGroup);
+
+  // ---- 材质 ----
+  const matLid = new THREE.MeshStandardMaterial({
+    color:0x17171c, roughness:0.55, metalness:0.08, envMapIntensity:0.4
+  });
+  const matPin = new THREE.MeshStandardMaterial({
+    color:0xd6dbe2, roughness:0.18, metalness:1.0, envMapIntensity:1.2,
+    emissive:0x9fd8ff, emissiveIntensity:0.35
+  });
+  const matGold = new THREE.MeshStandardMaterial({
+    color:0xe6b84a, roughness:0.28, metalness:1.0, envMapIntensity:1.1,
+    emissive:0x5a3d08, emissiveIntensity:0.25
+  });
+  const matSubstrate = new THREE.MeshStandardMaterial({
+    color:0x7a5a36, roughness:0.65, metalness:0.35, envMapIntensity:0.5
+  });
+  const matPad = new THREE.MeshStandardMaterial({
+    color:0xd9a944, roughness:0.3, metalness:1.0, envMapIntensity:1.0
+  });
+
+  const parts = {};
+
+  // ---- 封装顶盖（带真实丝印） ----
+  const lidGroup = new THREE.Group();
+  lidGroup.userData.compKey = 'lid';
+  chipGroup.add(lidGroup);
+
+  // 主体
+  const lidBody = new THREE.Mesh(new THREE.BoxGeometry(7, 0.9, 7), matLid);
+  lidBody.position.y = 0;
+  lidBody.castShadow = true;
+  lidBody.receiveShadow = true;
+  lidGroup.add(lidBody);
+  // 顶部微缩平台（成型台阶感）
+  const lidTop = new THREE.Mesh(new THREE.BoxGeometry(6.55, 0.16, 6.55), matLid);
+  lidTop.position.y = 0.5;
+  lidTop.castShadow = true;
+  lidGroup.add(lidTop);
+
+  // 丝印纹理（Canvas 绘制：ST 徽标 + 型号 + 批号 + Pin1 圆点 + 产地）
+  function makeMarkTexture(){
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    const x = c.getContext('2d');
+    // 环氧顶面底色
+    x.fillStyle = '#18181d';
+    x.fillRect(0,0,512,512);
+    // 细微磨砂噪点
+    for(let i=0;i<2500;i++){
+      x.fillStyle = `rgba(255,255,255,${Math.random()*0.025})`;
+      x.fillRect(Math.random()*512, Math.random()*512, 1.5, 1.5);
+    }
+    // 激光蚀刻色
+    const ink = 'rgba(158,162,170,0.92)';
+    x.fillStyle = ink;
+    x.strokeStyle = ink;
+
+    // Pin1 定位圆点（左上角，凹坑效果）
+    x.beginPath(); x.arc(78, 78, 16, 0, Math.PI*2);
+    x.fillStyle = 'rgba(0,0,0,0.55)'; x.fill();
+    x.lineWidth = 2;
+    x.strokeStyle = 'rgba(120,124,132,0.7)'; x.stroke();
+
+    // ST 圆形徽标
+    x.lineWidth = 5;
+    x.beginPath(); x.arc(120, 200, 46, 0, Math.PI*2); x.stroke();
+    x.fillStyle = ink;
+    x.font = 'bold 46px Arial, sans-serif';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText('ST', 120, 202);
+
+    // 型号
+    x.font = 'bold 44px Consolas, "Courier New", monospace';
+    x.textAlign = 'center';
+    x.fillText('STM32F103C8T6', 290, 190);
+    // 完整丝印第二行（料号缩写）
+    x.font = '30px Consolas, monospace';
+    x.fillText('638C8T6', 290, 245);
+    // 批号
+    x.font = '26px Consolas, monospace';
+    x.fillText('YD A241  ·  CN', 290, 300);
+    // 产地
+    x.font = '20px Arial, sans-serif';
+    x.fillStyle = 'rgba(158,162,170,0.65)';
+    x.fillText('MADE IN CHINA', 290, 360);
+    // 底部小三角定位刻线
+    x.strokeStyle = 'rgba(158,162,170,0.5)';
+    x.lineWidth = 2;
+    x.beginPath();
+    x.moveTo(256, 470); x.lineTo(266, 486); x.lineTo(246, 486); x.closePath();
+    x.stroke();
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.anisotropy = 8;
+    return tex;
+  }
+  const markPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(6.55, 6.55),
+    new THREE.MeshStandardMaterial({map:makeMarkTexture(), roughness:0.5, metalness:0.05, envMapIntensity:0.3})
+  );
+  markPlane.rotation.x = -Math.PI/2;
+  markPlane.position.y = 0.59;
+  lidGroup.add(markPlane);
+
+  parts.lid = {
+    meshes:[lidGroup],
+    homePos: new THREE.Vector3(0, 0, 0),
+    explodePos: new THREE.Vector3(0, 7.4, 0),
+    exploded:false
+  };
+
+  // ---- 鸥翼引脚（三段弯折，48 个，每边 12） ----
+  const pinGroup = new THREE.Group();
+  pinGroup.userData.compKey = 'pins';
+  chipGroup.add(pinGroup);
+
+  // 本地坐标：引脚沿 +z 伸出
+  function buildGullWingPin(){
+    const g = new THREE.Group();
+    // 肩部：贴封装水平伸出
+    const shoulder = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.12, 0.62), matPin);
+    shoulder.position.set(0, -0.42, 3.78);
+    shoulder.castShadow = true;
+    g.add(shoulder);
+    // 斜面：向下弯折
+    const slope = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.11, 0.62), matPin);
+    slope.position.set(0, -0.78, 4.28);
+    slope.rotation.x = 0.62;
+    slope.castShadow = true;
+    g.add(slope);
+    // 焊脚：底部水平
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.1, 0.55), matPin);
+    foot.position.set(0, -1.16, 4.66);
+    foot.castShadow = true;
+    g.add(foot);
+    return g;
+  }
+
+  const PIN_SPACING = 0.55;
+  const PIN_COUNT = 12;
+  for(let i=0;i<PIN_COUNT;i++){
+    const off = -((PIN_COUNT-1)/2) * PIN_SPACING;
+    const pos = off + i*PIN_SPACING;
+    // 前边 z+
+    const pf = buildGullWingPin();
+    pf.position.set(pos, 0, 0);
+    pinGroup.add(pf);
+    // 后边 z-（绕 y 转 180°）
+    const pb = buildGullWingPin();
+    pb.rotation.y = Math.PI;
+    pb.position.set(pos, 0, 0);
+    pinGroup.add(pb);
+    // 右边 x+（转 90°）
+    const pr = buildGullWingPin();
+    pr.rotation.y = Math.PI/2;
+    pr.position.set(0, 0, pos);
+    pinGroup.add(pr);
+    // 左边 x-（转 -90°）
+    const pl = buildGullWingPin();
+    pl.rotation.y = -Math.PI/2;
+    pl.position.set(0, 0, pos);
+    pinGroup.add(pl);
+  }
+  // 记录每个引脚组的家位置，供散开动画使用
+  pinGroup.children.forEach(p=>{
+    p.userData.homePos = p.position.clone();
+  });
+
+  parts.pins = {
+    meshes:[pinGroup],
+    homePos: new THREE.Vector3(0, 0, 0),
+    explodePos: new THREE.Vector3(0, 0, 0),
+    exploded:false
+  };
+
+  // ---- 基板 / 引线框架（打包为 baseGroup，供开场落位） ----
+  const baseGroup = new THREE.Group();
+  chipGroup.add(baseGroup);
+  const substrate = new THREE.Mesh(new THREE.BoxGeometry(6.9, 0.28, 6.9), matSubstrate);
+  substrate.position.y = -0.52;
+  substrate.receiveShadow = true;
+  substrate.userData.compKey = 'die';
+  baseGroup.add(substrate);
+
+  // 基板上的键合焊盘环（金线落点）
+  const padGeo = new THREE.BoxGeometry(0.22, 0.04, 0.22);
+  const PAD_R = 1.95;
+  for(let i=0;i<16;i++){
+    const angle = (i/16)*Math.PI*2;
+    const pad = new THREE.Mesh(padGeo, matPad);
+    pad.position.set(Math.cos(angle)*PAD_R, -0.36, Math.sin(angle)*PAD_R);
+    pad.userData.compKey = 'die';
+    baseGroup.add(pad);
+  }
+
+  // ---- 硅片 Die（带电路纹理）+ 金线键合 ----
+  const dieGroup = new THREE.Group();
+  dieGroup.userData.compKey = 'die';
+  chipGroup.add(dieGroup);
+
+  function makeDieTexture(){
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    const x = c.getContext('2d');
+    const g = x.createLinearGradient(0,0,256,256);
+    g.addColorStop(0,'#1b3a72'); g.addColorStop(1,'#2a1f5e');
+    x.fillStyle = g; x.fillRect(0,0,256,256);
+    // 电路网格纹路
+    x.strokeStyle = 'rgba(140,190,255,0.25)';
+    x.lineWidth = 1;
+    for(let i=0;i<=256;i+=16){
+      x.beginPath(); x.moveTo(i,0); x.lineTo(i,256); x.stroke();
+      x.beginPath(); x.moveTo(0,i); x.lineTo(256,i); x.stroke();
+    }
+    // 中央电路块高光
+    x.fillStyle = 'rgba(180,220,255,0.12)';
+    x.fillRect(80,80,96,96);
+    const tex = new THREE.CanvasTexture(c);
+    tex.anisotropy = 8;
+    return tex;
+  }
+  const matDie = new THREE.MeshStandardMaterial({
+    color:0x24468a, roughness:0.18, metalness:0.65,
+    emissive:0x0a2a5a, emissiveIntensity:0.35,
+    envMapIntensity:0.8, map:makeDieTexture()
+  });
+  const die = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.22, 3.1), matDie);
+  die.position.y = -0.2;
+  die.castShadow = true;
+  dieGroup.add(die);
+
+  // 金线键合：从 die 边缘拱弧到基板焊盘
+  const WIRE_R = 1.55;
+  for(let i=0;i<16;i++){
+    const angle = (i/16)*Math.PI*2;
+    const sx = Math.cos(angle)*WIRE_R, sz = Math.sin(angle)*WIRE_R;
+    const ex = Math.cos(angle)*PAD_R, ez = Math.sin(angle)*PAD_R;
+    const curve = new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(sx, -0.05, sz),
+      new THREE.Vector3((sx+ex)/2, 0.55, (sz+ez)/2),
+      new THREE.Vector3(ex, -0.34, ez)
+    );
+    const wire = new THREE.Mesh(
+      new THREE.TubeGeometry(curve, 12, 0.032, 6, false),
+      matGold
+    );
+    dieGroup.add(wire);
+  }
+
+  parts.die = {
+    meshes:[dieGroup],
+    homePos: new THREE.Vector3(0, 0, 0),
+    explodePos: new THREE.Vector3(0, 2.0, 0),
+    exploded:false
+  };
+
+  // ---- 内部功能块（闭合时藏于 die 上方，拆解时升起） ----
+  function makeBlock(w,h,d,color,emissive,intensity){
+    const mat = new THREE.MeshStandardMaterial({
+      color:color, roughness:0.3, metalness:0.4,
+      emissive:emissive, emissiveIntensity:intensity, envMapIntensity:0.6
+    });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+    mesh.castShadow = true;
+    return mesh;
+  }
+  const blockY = -0.05;
+  const blockDefs = [
+    {key:'core',   w:1.4, d:1.2, x:-0.75, z:0.5,  color:0x00d4ff, emissive:0x00d4ff, eh:3.6},
+    {key:'flash',  w:1.4, d:1.0, x:0.75,  z:0.6,  color:0xffb347, emissive:0xffb347, eh:4.6},
+    {key:'sram',   w:0.9, d:0.8, x:0.9,   z:-0.5, color:0x4ade80, emissive:0x4ade80, eh:5.6},
+    {key:'gpio',   w:0.8, d:1.6, x:-1.2,  z:-0.3, color:0x60a5fa, emissive:0x60a5fa, eh:4.1},
+    {key:'comm',   w:0.8, d:0.7, x:-0.3,  z:-0.9, color:0xc084fc, emissive:0xc084fc, eh:6.1},
+    {key:'timer',  w:0.8, d:0.7, x:0.6,   z:-0.9, color:0xf472b6, emissive:0xf472b6, eh:5.1},
+    {key:'adc',    w:0.7, d:0.6, x:-0.3,  z:1.0,  color:0xfacc15, emissive:0xfacc15, eh:3.1},
+    {key:'clock',  w:0.6, d:0.5, x:-1.2,  z:1.0,  color:0x94a3b8, emissive:0x94a3b8, eh:2.6},
+    {key:'swd',    w:0.4, d:0.4, x:1.3,   z:1.2,  color:0xfb923c, emissive:0xfb923c, eh:2.1},
+  ];
+  blockDefs.forEach((b, idx)=>{
+    const mesh = makeBlock(b.w, 0.2, b.d, b.color, b.emissive, 0.12);
+    mesh.position.set(b.x, blockY, b.z);
+    mesh.userData.compKey = b.key;
+    chipGroup.add(mesh);
+    parts[b.key] = {
+      meshes:[mesh],
+      homePos: new THREE.Vector3(b.x, blockY, b.z),
+      explodePos: new THREE.Vector3(b.x, b.eh, b.z),
+      exploded:false,
+      baseEmissive:0.4,
+      color:b.color,
+      intro:{delay:2.0 + idx*0.09, fromY:-1.2, fromScale:0.01, dur:0.55, back:true}
+    };
+  });
+
+  // ========== 开场动画编排 ==========
+  const easeOutCubic = x => 1 - Math.pow(1-x, 3);
+  const easeOutBack = x => { const c=1.70158; return 1 + (c+1)*Math.pow(x-1,3) + c*Math.pow(x-1,2); };
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+
+  // 各部件开场落位配置（对象、延迟、起点高度、起点缩放、时长）
+  const introObjects = [
+    {obj:baseGroup, delay:0.35, fromY:-3.5, fromScale:0.6, dur:0.9, back:false},
+    {obj:pinGroup, delay:1.0, fromY:-3.0, fromScale:0.85, dur:0.9, back:false},
+    {obj:dieGroup, delay:1.6, fromY:-2.2, fromScale:0.7, dur:0.8, back:false},
+    {obj:lidGroup, delay:2.9, fromY:6.5, fromScale:1.0, dur:1.1, back:false},
+  ];
+  // 功能块使用各自 parts[].intro
+  blockDefs.forEach((b,idx)=>{
+    introObjects.push({
+      obj: parts[b.key].meshes[0],
+      delay: parts[b.key].intro.delay,
+      fromY: parts[b.key].intro.fromY,
+      fromScale: parts[b.key].intro.fromScale,
+      dur: parts[b.key].intro.dur,
+      back:true
+    });
+  });
+
+  // 开场扫描光（顶盖落位时横扫芯片）
+  const scanLight = new THREE.Mesh(
+    new THREE.PlaneGeometry(8.2, 0.18),
+    new THREE.MeshBasicMaterial({color:0x9fe8ff, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false})
+  );
+  scanLight.rotation.x = -Math.PI/2;
+  scanLight.position.set(-8, 1.0, 0);
+  chipGroup.add(scanLight);
+  const scanGlow = new THREE.PointLight(0x66d8ff, 0, 12);
+  chipGroup.add(scanGlow);
+
+  const CAM_START = new THREE.Vector3(21, 17, 27);
+  const CAM_END = new THREE.Vector3(11, 9, 13);
+  let introActive = true;
+  let introDone = false;
+  const INTRO_END = 4.6;
+  let waveStart = -1;
+
+  // 初始：全部隐藏并置于起点，开场期间禁用交互
+  controls.enabled = false;
+  introObjects.forEach(io=>{
+    io.home = io.obj.position.clone();
+    io.obj.visible = false;
+    io.obj.position.y = io.home.y + io.fromY;
+    io.obj.scale.setScalar(Math.max(0.001, io.fromScale));
+  });
+
+  // ========== 标签 ==========
+  const labelContainer = document.getElementById('labels');
+  const labelEls = {};
+  Object.keys(COMPONENTS).forEach(key=>{
+    const el = document.createElement('div');
+    el.className = 'label';
+    const dotColor = parts[key] && parts[key].color
+      ? '#'+parts[key].color.toString(16) : '#00d4ff';
+    el.innerHTML = `<span class="dot" style="background:${dotColor}"></span>${COMPONENTS[key].name}`;
+    labelContainer.appendChild(el);
+    labelEls[key] = el;
+  });
+
+  const labelAnchors = {
+    lid: new THREE.Vector3(0, 0.7, 0),
+    pins: new THREE.Vector3(5.2, -1.1, 0),
+    die: new THREE.Vector3(0, 0.1, 0),
+    core: new THREE.Vector3(-0.75, 0.2, 0.5),
+    flash: new THREE.Vector3(0.75, 0.2, 0.6),
+    sram: new THREE.Vector3(0.9, 0.2, -0.5),
+    gpio: new THREE.Vector3(-1.2, 0.2, -0.3),
+    comm: new THREE.Vector3(-0.3, 0.2, -0.9),
+    timer: new THREE.Vector3(0.6, 0.2, -0.9),
+    adc: new THREE.Vector3(-0.3, 0.2, 1.0),
+    clock: new THREE.Vector3(-1.2, 0.2, 1.0),
+    swd: new THREE.Vector3(1.3, 0.2, 1.2),
+  };
+
+  // ========== 射线交互 ==========
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  let selectedKey = null;
+
+  function findCompKey(obj){
+    while(obj){
+      if(obj.userData && obj.userData.compKey) return obj.userData.compKey;
+      obj = obj.parent;
+    }
+    return null;
+  }
+
+  canvas.addEventListener('click', (e)=>{
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(chipGroup.children, true);
+    if(intersects.length > 0){
+      const key = findCompKey(intersects[0].object);
+      if(key && parts[key]){
+        togglePart(key);
+        showInfo(key);
+      }
+    }
+  });
+
+  canvas.addEventListener('mousemove', (e)=>{
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(chipGroup.children, true);
+    canvas.style.cursor = (intersects.length>0 && findCompKey(intersects[0].object)) ? 'pointer' : 'default';
+  });
+
+  function togglePart(key){
+    parts[key].exploded = !parts[key].exploded;
+    updateExplodeButton();
+  }
+
+  function setAllExploded(state){
+    Object.keys(parts).forEach(key=>{ parts[key].exploded = state; });
+    updateExplodeButton();
+  }
+
+  function updateExplodeButton(){
+    const btn = document.getElementById('btnExplode');
+    const anyExploded = Object.values(parts).some(p=>p.exploded);
+    btn.textContent = anyExploded ? '全部合拢' : '拆解全部';
+  }
+
+  // ========== 信息面板 ==========
+  const infoPanel = document.getElementById('infoPanel');
+  function showInfo(key){
+    const c = COMPONENTS[key];
+    if(!c) return;
+    document.getElementById('ipTag').textContent = c.tag;
+    document.getElementById('ipName').textContent = c.name;
+    document.getElementById('ipDesc').textContent = c.desc;
+    const specsEl = document.getElementById('ipSpecs');
+    specsEl.innerHTML = '';
+    c.specs.forEach(pair=>{
+      for(let i=0;i<pair.length;i+=2){
+        const row = document.createElement('div');
+        row.className = 'spec';
+        row.innerHTML = `<span class="k">${pair[i]}</span><span class="v">${pair[i+1]}</span>`;
+        specsEl.appendChild(row);
+      }
+    });
+    infoPanel.classList.add('show');
+    selectedKey = key;
+  }
+
+  // ========== 按钮事件 ==========
+  document.getElementById('btnExplode').addEventListener('click', ()=>{
+    const anyExploded = Object.values(parts).some(p=>p.exploded);
+    setAllExploded(!anyExploded);
+  });
+  document.getElementById('btnAssemble').addEventListener('click', ()=>{
+    setAllExploded(false);
+    infoPanel.classList.remove('show');
+    selectedKey = null;
+  });
+  document.getElementById('btnReset').addEventListener('click', ()=>{
+    inspect.active = false;
+    controls.enabled = true;
+    camera.fov = inspect.fov;
+    camera.updateProjectionMatrix();
+    camera.position.set(11, 9, 13);
+    controls.target.set(0, 0, 0);
+    document.body.classList.remove('cinematic');
+  });
+  document.getElementById('btnInspect').addEventListener('click', startInspect);
+
+  // ========== 电影级检视镜头：合拢环绕 → 自动拆解 → 详细近景环绕 ==========
+  const INSPECT_TARGET_CLOSED = new THREE.Vector3(0, 0.15, 0);
+  const inspectLook = new THREE.Vector3(0, 1.0, 0);
+  // 时间轴：推轨 → 合拢环绕 → 拆解等待 → 拆解后自下而上逐层详细检视
+  const SEG_PUSH = 2.0, SEG_CLOSED = 4.5, SEG_WAIT = 2.4, SEG_OPEN = 12.0;
+  // 拆解后机位关键帧：[半径, 相机高, 注视高]，连续匀速插值，不在层位停顿
+  const INSPECT_KEYS = [
+    [6.8, 3.5, 1.1],  // 承接拆解等待结束
+    [6.2, 0.6, -0.8], // 鸥翼引脚 / 焊脚层
+    [5.9, 2.6, 3.0],  // 内核/Flash/SRAM 内部块
+    [6.0, 4.6, 4.6],  // 硅片金线 / 内部块上层
+    [6.6, 8.4, 7.3]   // 顶盖悬于最高处，高位俯看
+  ];
+  const inspect = {active:false, start:0, fromPos:new THREE.Vector3(), a0:0, fov:camera.fov, fired:false};
+  function _easeInOut(x){ return x<0.5 ? 2*x*x : 1-Math.pow(-2*x+2,2)/2; }
+  function startInspect(){
+    if(inspect.active) return;
+    inspect.active = true;
+    inspect.fired = false;
+    inspect.start = clock.getElapsedTime();
+    inspect.fromPos.copy(camera.position);
+    inspect.a0 = Math.atan2(camera.position.z, camera.position.x);
+    inspect.fov = camera.fov;
+    setAllExploded(false);
+    controls.enabled = false;
+    // 电影模式：隐藏全部界面文字/按钮，清空选中面板
+    document.body.classList.add('cinematic');
+    infoPanel.classList.remove('show');
+    selectedKey = null;
+  }
+  function updateInspect(now){
+    const TOT = SEG_PUSH + SEG_CLOSED + SEG_WAIT + SEG_OPEN;
+    const lt = now - inspect.start;
+    if(lt >= TOT){
+      inspect.active = false;
+      controls.enabled = true;
+      inspectLook.set(0, 6.5, 0);
+      controls.target.copy(inspectLook);
+      camera.fov = inspect.fov;
+      camera.updateProjectionMatrix();
+      document.body.classList.remove('cinematic');
+      return;
+    }
+    const aEndClosed = inspect.a0 + 3.2;
+    let px, py, pz, lookAt = INSPECT_TARGET_CLOSED;
+
+    if(lt < SEG_PUSH){
+      // 推轨：从当前机位缓推到合拢环绕起点
+      const p = _easeInOut(lt/SEG_PUSH);
+      const sx = Math.cos(inspect.a0)*7.2, sz = Math.sin(inspect.a0)*7.2;
+      px = inspect.fromPos.x + (sx-inspect.fromPos.x)*p;
+      py = inspect.fromPos.y + (2.6-inspect.fromPos.y)*p;
+      pz = inspect.fromPos.z + (sz-inspect.fromPos.z)*p;
+    } else if(lt < SEG_PUSH + SEG_CLOSED){
+      // 合拢态：绕整颗封装缓弧一圈
+      const q = (lt-SEG_PUSH)/SEG_CLOSED;
+      const e = _easeInOut(q);
+      const a = inspect.a0 + e*3.2;
+      const R = 7.2 - 0.5*Math.sin(q*Math.PI);
+      const y = 2.6 + 0.8*e + Math.sin(q*Math.PI*2)*0.12;
+      px = Math.cos(a)*R; py = y; pz = Math.sin(a)*R;
+    } else if(lt < SEG_PUSH + SEG_CLOSED + SEG_WAIT){
+      // 触发拆解，镜头缓停，等待部件散开
+      if(!inspect.fired){
+        inspect.fired = true;
+        setAllExploded(true);
+      }
+      const q = (lt-SEG_PUSH-SEG_CLOSED)/SEG_WAIT;
+      const a = aEndClosed + q*0.25;
+      const R = 6.8;
+      const y = 3.1 + q*0.4;
+      px = Math.cos(a)*R; py = y; pz = Math.sin(a)*R;
+      inspectLook.set(0, 0.6+q*0.5, 0);
+      lookAt = inspectLook;
+    } else {
+      // 拆解态：自下而上连续匀速穿行 —— 引脚底座 → 内部块 → 硅片 → 顶盖
+      const q = (lt-SEG_PUSH-SEG_CLOSED-SEG_WAIT)/SEG_OPEN;
+      const n = INSPECT_KEYS.length - 1;
+      const f = Math.min(Math.max(q,0),1) * n;
+      const seg = Math.min(Math.floor(f), n-1);
+      const s = f - seg;                       // 段内线性，避免层位停顿
+      const kA = INSPECT_KEYS[seg], kB = INSPECT_KEYS[seg+1];
+      const R = kA[0]+(kB[0]-kA[0])*s;
+      const camY = kA[1]+(kB[1]-kA[1])*s;
+      const tgtY = kA[2]+(kB[2]-kA[2])*s;
+      const a = aEndClosed + 0.25 + _easeInOut(q)*4.8;
+      px = Math.cos(a)*R; py = camY; pz = Math.sin(a)*R;
+      inspectLook.set(0, tgtY, 0);
+      lookAt = inspectLook;
+    }
+    camera.position.set(px, py, pz);
+    camera.lookAt(lookAt);
+    // 电影感：全程缓慢收窄焦距
+    const fovT = inspect.fov - 6*_easeInOut(Math.min(lt/TOT,1));
+    if(Math.abs(fovT-camera.fov)>0.01){ camera.fov=fovT; camera.updateProjectionMatrix(); }
+  }
+
+  // ========== 动画循环 ==========
+  const clock = new THREE.Clock();
+  const tempVec = new THREE.Vector3();
+
+  function finishIntro(){
+    if(introDone) return;
+    introDone = true;
+    introActive = false;
+    introObjects.forEach(io=>{
+      io.obj.visible = true;
+      io.obj.position.y = io.home.y;
+      io.obj.scale.setScalar(1);
+    });
+    camera.position.copy(CAM_END);
+    controls.target.set(0,0,0);
+    controls.enabled = true;
+    document.getElementById('intro').classList.add('off');
+    document.getElementById('tapHint').classList.add('on');
+    document.body.classList.add('reveal');
+
+    // 地面多米诺铺开（减少动效时直接铺平点亮）
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(reduce){
+      updateTiles(999);
+    } else {
+      waveStart = clock.getElapsedTime();
+    }
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    const t = clock.getElapsedTime();
+
+    // ===== 开场编排：镜头推进 + 部件落位 + 扫描光 =====
+    if(introActive){
+      const cp = easeOutCubic(clamp01(t/4.0));
+      camera.position.lerpVectors(CAM_START, CAM_END, cp);
+      controls.target.set(0,0,0);
+
+      introObjects.forEach(io=>{
+        const p = clamp01((t - io.delay)/io.dur);
+        if(p <= 0){ io.obj.visible = false; return; }
+        const e = io.back ? easeOutBack(p) : easeOutCubic(p);
+        io.obj.visible = true;
+        io.obj.position.y = io.home.y + io.fromY*(1-e);
+        io.obj.scale.setScalar(Math.max(0.001, io.fromScale + (1-io.fromScale)*e));
+      });
+
+      // 扫描光横扫
+      const sp = clamp01((t-3.3)/0.9);
+      if(sp>0 && sp<1){
+        scanLight.position.x = -8 + 16*sp;
+        scanLight.material.opacity = Math.sin(sp*Math.PI)*0.9;
+        scanGlow.position.set(scanLight.position.x, 1.2, 0);
+        scanGlow.intensity = Math.sin(sp*Math.PI)*2.2;
+      } else {
+        scanLight.material.opacity = 0;
+        scanGlow.intensity = 0;
+      }
+
+      if(t >= INTRO_END) finishIntro();
+    }
+
+    if(!introActive) Object.keys(parts).forEach(key=>{
+      const p = parts[key];
+      const target = p.exploded ? p.explodePos : p.homePos;
+
+      if(key === 'pins'){
+        // 每个鸥翼引脚沿径向向外散开
+        pinGroup.children.forEach(pin=>{
+          const home = pin.userData.homePos;
+          let tx = home.x, tz = home.z;
+          if(p.exploded){
+            const dir = new THREE.Vector3(home.x, 0, home.z);
+            if(dir.lengthSq() > 0.001){
+              dir.normalize();
+              tx = home.x + dir.x*1.3;
+              tz = home.z + dir.z*1.3;
+            }
+          }
+          pin.position.x += (tx - pin.position.x)*0.1;
+          pin.position.z += (tz - pin.position.z)*0.1;
+        });
+      } else {
+        p.meshes.forEach(m=>{
+          tempVec.copy(target);
+          m.position.x += (tempVec.x - m.position.x)*0.12;
+          m.position.y += (tempVec.y - m.position.y)*0.12;
+          m.position.z += (tempVec.z - m.position.z)*0.12;
+        });
+      }
+
+      // 仅引脚在拆解时增强辉光，内部块保持哑光不发光
+      if(key === 'pins'){
+        p.meshes.forEach(m=>{
+          if(m.material && m.material.emissive){
+            const targetIntensity = p.exploded ? 1.0 : (p.baseEmissive || 0.3);
+            m.material.emissiveIntensity += (targetIntensity - m.material.emissiveIntensity)*0.1;
+          }
+        });
+      }
+    });
+
+    // 选中部件呼吸发光（仅引脚，内部块不发光）
+    if(selectedKey === 'pins' && parts.pins){
+      const pulse = 0.8 + Math.sin(t*3)*0.3;
+      parts.pins.meshes.forEach(m=>{
+        if(m.material && m.material.emissive){
+          m.material.emissiveIntensity = Math.max(m.material.emissiveIntensity, pulse);
+        }
+      });
+    }
+
+    // 标签投影（检视时保留模块名称，便于区分；界面按钮/标题仍由 cinematic 隐藏）
+    Object.keys(labelEls).forEach(key=>{
+      const p = parts[key];
+      if(!p){ labelEls[key].classList.remove('visible'); return; }
+
+      let worldPos;
+      if(key === 'pins'){
+        worldPos = new THREE.Vector3(5.2, -1.1, 0);
+      } else {
+        const m = p.meshes[0];
+        worldPos = new THREE.Vector3(m.position.x, m.position.y, m.position.z);
+      }
+
+      const isInternal = ['core','flash','sram','gpio','comm','timer','adc','clock','swd','die'].includes(key);
+      const showLabel = isInternal ? (p.exploded || selectedKey===key) : true;
+      if(!showLabel){ labelEls[key].classList.remove('visible'); return; }
+
+      tempVec.copy(worldPos);
+      tempVec.project(camera);
+      if(tempVec.z > 1){ labelEls[key].classList.remove('visible'); return; }
+
+      const sx = (tempVec.x*0.5+0.5)*window.innerWidth;
+      const sy = (-tempVec.y*0.5+0.5)*window.innerHeight;
+      labelEls[key].style.left = sx+'px';
+      labelEls[key].style.top = (sy-10)+'px';
+      labelEls[key].classList.add('visible');
+    });
+
+    // ===== 光墙推进（首轮扫过 + 循环环境）+ 多米诺翻倒 + 余波涟漪 =====
+    if(waveStart >= 0){
+      const wp = t - waveStart;
+      updateTiles(wp);
+      const revealDur = WALL_MAXR/WALL_SPEED;
+      let R, coreOp, haloOp;
+      if(wp < revealDur + 0.5){
+        // 首轮：强力亮环扫过，配合方格翻倒
+        R = wp*WALL_SPEED;
+        const fade = R>=WALL_MAXR ? _clamp01(1-(R-WALL_MAXR)/0.5) : 1;
+        coreOp = 0.95*fade; haloOp = 0.28*fade;
+      } else {
+        // 循环环境光墙：每 3.8s 从中心再推一圈，更慢更暗
+        const P = 3.8;
+        const lt = (wp - revealDur) % P;
+        R = lt*WALL_SPEED*0.8;
+        const fade = _clamp01(1 - R/WALL_MAXR);
+        coreOp = 0.55*fade; haloOp = 0.18*fade;
+      }
+      wallCore.scale.set(R, R, 1);
+      wallHalo.scale.set(R, R, 1);
+      wallCore.material.opacity = coreOp;
+      wallHalo.material.opacity = haloOp;
+      rippleRings.forEach((ring,i)=>{
+        const local = wp - i*0.4;
+        if(local <= 0){ ring.material.opacity = 0; return; }
+        const p = _clamp01(local/2.0);
+        const s = 0.5 + p*13;
+        ring.scale.set(s, s, 1);
+        ring.material.opacity = (1-p)*0.45;
+      });
+    }
+    // 科技环缓转 + 中心辉光呼吸
+    techRing.rotation.z = t*0.12;
+    glowDisc.material.opacity = 0.14 + Math.sin(t*1.6)*0.05;
+
+    // 电影检视镜头期间由脚本接管相机，结束后交还 OrbitControls
+    if(inspect.active){
+      updateInspect(t);
+    } else {
+      controls.update();
+    }
+    composer.render();
+  }
+
+  window.addEventListener('resize', ()=>{
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  animate();
+  document.getElementById('loading').style.display = 'none';
+
+  // ========== 开场遮罩：标题解码 / 进度 / 日志 ==========
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const introEl = document.getElementById('intro');
+
+  if(reduceMotion){
+    // 无障碍：跳过动画，直接进入
+    finishIntro();
+    introEl.classList.add('off');
+  } else {
+    // 标题逐字解码锁定
+    const TARGET = 'STM32F103C8T6';
+    const titleEl = document.getElementById('introTitle');
+    const CHARS = '0123456789ABCDEF';
+    const lockAt = TARGET.split('').map((_,i)=>0.35 + i*0.11);
+    const t0 = performance.now();
+    const decodeTimer = setInterval(()=>{
+      const el = (performance.now()-t0)/1000;
+      let html = '';
+      TARGET.split('').forEach((ch,i)=>{
+        if(el >= lockAt[i]){
+          html += `<span class="lock">${ch}</span>`;
+        } else {
+          html += `<span style="color:#5a6a80">${CHARS[Math.floor(Math.random()*CHARS.length)]}</span>`;
+        }
+      });
+      titleEl.innerHTML = html;
+      if(el > lockAt[TARGET.length-1] + 0.3) clearInterval(decodeTimer);
+    }, 50);
+
+    // 进度条
+    const barEl = document.getElementById('introBar');
+    const pctEl = document.getElementById('introPct');
+    const progTimer = setInterval(()=>{
+      const el = (performance.now()-t0)/1000;
+      const p = Math.min(100, el/INTRO_END*100);
+      barEl.style.width = p + '%';
+      pctEl.textContent = Math.floor(p) + '%';
+      if(p>=100) clearInterval(progTimer);
+    }, 60);
+
+    // 日志行按时间出现
+    const LOGS = [
+      [0.25,'$ 初始化 ARM Cortex-M3 内核 ............','OK'],
+      [0.95,'$ 载入 64KB Flash 用户镜像 ............','OK'],
+      [1.55,'$ 校准 20KB SRAM 零等待 ..............','OK'],
+      [2.05,'$ 使能外设 USART / SPI / I2C / ADC ...','OK'],
+      [2.55,'$ 拱弧键合 16 根金丝 (Au) ............','OK'],
+      [3.15,'$ 封装落位 · 光学扫描校准 ............','DONE'],
+    ];
+    const logEl = document.getElementById('introLog');
+    LOGS.forEach(([delay,txt,ok])=>{
+      setTimeout(()=>{
+        const row = document.createElement('div');
+        row.innerHTML = `${txt} <span class="ok">[${ok}]</span>`;
+        logEl.appendChild(row);
+        requestAnimationFrame(()=>row.classList.add('on'));
+      }, delay*1000);
+    });
+  }
+
+  // 首次点击部件后隐藏提示
+  canvas.addEventListener('click', ()=>{
+    document.getElementById('tapHint').classList.remove('on');
+  });
+
+})();
+</script>
+</body>
+</html>
